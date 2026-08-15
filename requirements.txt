@@ -1,0 +1,3 @@
+python-telegram-bot
+pyairtable
+python-dotenv
