@@ -33,22 +33,20 @@ def check_restaurant_status(restaurant_id: str) -> bool:
 
 
 def get_restaurant_info(restaurant_id: str):
-  """Restoran məlumatlarını ID-yə görə gətirir"""
+  """Restoran məlumatlarını ID-yə görə gətirir (Böyük-kiçik hərf fərqini aradan kaldırır)"""
   try:
-    if restaurant_id.startswith("rec"):
-      record = restaurants_table.get(restaurant_id)
+    clean_id = restaurant_id.strip()
+
+    if clean_id.startswith("rec"):
+      record = restaurants_table.get(clean_id)
       fields = record["fields"]
-      if not fields.get("Is_Active", True):
-        return None
       return {"id": record["id"], **fields}
 
-    formula = f"{{Restoraunt_ID}} = '{restaurant_id}'"
+    formula = f"LOWER({{Restoraunt_ID}}) = '{clean_id.lower()}'"
     records = restaurants_table.all(formula=formula)
 
     if records:
       fields = records[0]["fields"]
-      if not fields.get("Is_Active", True):
-        return None
       return {"id": records[0]["id"], **fields}
 
   except Exception as e:
@@ -63,7 +61,6 @@ def get_restaurant_menu(restaurant_id: str):
     if not restoran:
       return {}
 
-    # Status 'Aktiv' deyilsə menyunu vermirik
     status = restoran.get("Status", "")
     if status != "Aktiv":
       print(f"⚠️ Restoranın statusu aktiv deyil: {status}")
