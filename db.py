@@ -85,37 +85,59 @@ def get_restaurant_menu(restaurant_id: str):
             print("⚠️ Restoranın statusu aktiv deyil.")
             return {}
 
-        rest_record_id = restoran["id"]
+        rest_record_id = restoran.get("id", "")
+        clean_rest_id = restaurant_id.strip().lower()
 
-        # Airtable-dan bütün bazanı deyil, yalnız bu restorana aid və Is_Available=1 olanları filterləyirik
-        formula = f"AND(FIND('{rest_record_id}', ARRAYJOIN({{Restoraunt}})) > 0, {{Is_Available}} = 1)"
-        records = menu_table.all(formula=formula)
+        all_records = menu_table.all()
 
         categorized_menu = {}
-        for r in records:
+        for r in all_records:
             fields = r["fields"]
-            category = fields.get("Category", "Digər")
 
-            item = {
-                "id": r["id"],
-                "name": fields.get("Name", "Adsız Məhsul"),
-                "price": fields.get("Price", 0.0),
-                "image_url": (
-                    fields.get("Image", [{}])[0].get("url")
-                    if fields.get("Image")
-                    else None
-                ),
-            }
+            is_available = fields.get("Is_Available", True)
+            if not is_available:
+                continue
 
-            if category not in categorized_menu:
-                categorized_menu[category] = []
-            categorized_menu[category].append(item)
+            linked_restaurants = fields.get("Restoraunt", [])
+            
+            # Siyahıdakı elementləri mətnə çeviririk
+            linked_str_list = [str(x).strip().lower() for x in linked_restaurants]
+
+            # Həm Record ID (rec...), həm də Restoran ID (test1, ypx) üzrə yoxlayırıq
+            is_match = False
+            if rest_record_id and rest_record_id.lower() in linked_str_list:
+                is_match = True
+            elif clean_rest_id in linked_str_list:
+                is_match = True
+            else:
+                # Bəzən Airtable linked record adını gətirir
+                for item in linked_str_list:
+                    if clean_rest_id in item or (rest_record_id and rest_record_id.lower() in item):
+                        is_match = True
+                        break
+
+            if is_match:
+                category = fields.get("Category", "Digər")
+
+                item = {
+                    "id": r["id"],
+                    "name": fields.get("Name", "Adsız Məhsul"),
+                    "price": fields.get("Price", 0.0),
+                    "image_url": (
+                        fields.get("Image", [{}])[0].get("url")
+                        if fields.get("Image")
+                        else None
+                    ),
+                }
+
+                if category not in categorized_menu:
+                    categorized_menu[category] = []
+                categorized_menu[category].append(item)
 
         return categorized_menu
     except Exception as e:
         print(f"❌ Menyu xətası: {e}")
         return {}
-
 
 def save_order(
     restaurant_id: str,
