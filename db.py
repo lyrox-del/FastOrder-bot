@@ -11,117 +11,110 @@ api = Api(AIRTABLE_API_KEY)
 
 # Airtable cədvəlləri
 restaurants_table = api.table(AIRTABLE_BASE_ID, "Restoraunt")
-muracietler_table = api.table(AIRTABLE_BASE_ID, "Müraciətlər")  # Yeni cədvəl
+muracietler_table = api.table(AIRTABLE_BASE_ID, "Müraciətlər")
 menu_table = api.table(AIRTABLE_BASE_ID, "Menu")
 orders_table = api.table(AIRTABLE_BASE_ID, "Orders")
 
 
 def check_restaurant_status(restaurant_id: str) -> bool:
-  """Restoranın statusunu yoxlayır (Aktiv və ya Sınaq aktivdir)."""
-  try:
-    restoran = get_restaurant_info(restaurant_id)
-    if not restoran:
-      return False
+    """Restoranın statusunu yoxlayır (Aktiv və ya Sınaq aktivdir)."""
+    try:
+        restoran = get_restaurant_info(restaurant_id)
+        if not restoran:
+            return False
 
-    status = str(restoran.get("Status", "")).strip().lower()
-    # "Aktiv" və ya "Sınaq aktivdir" kimi statusları qəbul edir
-    return status in ["aktiv", "sınaq aktivdir", "sinaq aktivdir", "active"]
-  except Exception as e:
-    print(f"❌ Status yoxlama xətası: {e}")
-    return False
+        status = str(restoran.get("Status", "")).strip().lower()
+        return status in ["aktiv", "sınaq aktivdir", "sinaq aktivdir", "active"]
+    except Exception as e:
+        print(f"❌ Status yoxlama xətası: {e}")
+        return False
 
 
 def get_restaurant_info(restaurant_id: str):
-  """Əvvəlcə 'Restoraunt', tapılmasa 'Müraciətlər' cədvəlindən axtarır."""
-  try:
-    clean_id = restaurant_id.strip().lower()
+    """Əvvəlcə 'Restoraunt', tapılmasa 'Müraciətlər' cədvəlindən axtarır."""
+    try:
+        clean_id = restaurant_id.strip().lower()
 
-    # 1. Record ID vasitəsilə birbaşa axtarış (rec ilə başlayırsa)
-    if clean_id.startswith("rec"):
-      try:
-        record = restaurants_table.get(clean_id)
-        return {"id": record["id"], "source": "Restoraunt", **record["fields"]}
-      except Exception:
-        try:
-          record = muracietler_table.get(clean_id)
-          return {
-              "id": record["id"],
-              "source": "Müraciətlər",
-              **record["fields"],
-          }
-        except Exception:
-          pass
+        # 1. Record ID vasitəsilə birbaşa axtarış (rec ilə başlayırsa)
+        if clean_id.startswith("rec"):
+            try:
+                record = restaurants_table.get(clean_id)
+                return {"id": record["id"], "source": "Restoraunt", **record["fields"]}
+            except Exception:
+                try:
+                    record = muracietler_table.get(clean_id)
+                    return {
+                        "id": record["id"],
+                        "source": "Müraciətlər",
+                        "**record": record["fields"],
+                    }
+                except Exception:
+                    pass
 
-    # 2. 'Restoraunt' cədvəlində Restoraunt_ID sütunu üzrə axtarış
-    formula = f"LOWER({{Restoraunt_ID}}) = '{clean_id}'"
-    records = restaurants_table.all(formula=formula)
+        # 2. 'Restoraunt' cədvəlində Restoraunt_ID sütunu üzrə axtarış
+        formula = f"LOWER({{Restoraunt_ID}}) = '{clean_id}'"
+        records = restaurants_table.all(formula=formula)
 
-    if records:
-      fields = records[0]["fields"]
-      return {"id": records[0]["id"], "source": "Restoraunt", **fields}
+        if records:
+            fields = records[0]["fields"]
+            return {"id": records[0]["id"], "source": "Restoraunt", **fields}
 
-    # 3. Tapılmadısa, 'Müraciətlər' cədvəlində axtarış
-    muraciet_records = muracietler_table.all(formula=formula)
-    if muraciet_records:
-      fields = muraciet_records[0]["fields"]
-      return {
-          "id": muraciet_records[0]["id"],
-          "source": "Müraciətlər",
-          **fields,
-      }
+        # 3. Tapılmadısa, 'Müraciətlər' cədvəlində axtarış
+        muraciet_records = muracietler_table.all(formula=formula)
+        if muraciet_records:
+            fields = muraciet_records[0]["fields"]
+            return {
+                "id": muraciet_records[0]["id"],
+                "source": "Müraciətlər",
+                "**fields": fields,
+            }
 
-  except Exception as e:
-    print(f"❌ Restoran axtarış xətası: {e}")
-  return None
+    except Exception as e:
+        print(f"❌ Restoran axtarış xətası: {e}")
+    return None
 
 
 def get_restaurant_menu(restaurant_id: str):
-  """Restorana aid menyunu gətirir."""
-  try:
-    restoran = get_restaurant_info(restaurant_id)
-    if not restoran:
-      return {}
+    """Yalnız sorğu edilən restorana aid menyu elementlərini gətirir."""
+    try:
+        restoran = get_restaurant_info(restaurant_id)
+        if not restoran:
+            return {}
 
-    if not check_restaurant_status(restaurant_id):
-      print("⚠️ Restoranın statusu aktiv deyil.")
-      return {}
+        if not check_restaurant_status(restaurant_id):
+            print("⚠️ Restoranın statusu aktiv deyil.")
+            return {}
 
-    rest_record_id = restoran["id"]
-    all_records = menu_table.all()
+        rest_record_id = restoran["id"]
 
-    categorized_menu = {}
-    for r in all_records:
-      fields = r["fields"]
+        # Airtable-dan bütün bazanı deyil, yalnız bu restorana aid və Is_Available=1 olanları filterləyirik
+        formula = f"AND(FIND('{rest_record_id}', ARRAYJOIN({{Restoraunt}})) > 0, {{Is_Available}} = 1)"
+        records = menu_table.all(formula=formula)
 
-      is_available = fields.get("Is_Available", True)
-      if not is_available:
-        continue
+        categorized_menu = {}
+        for r in records:
+            fields = r["fields"]
+            category = fields.get("Category", "Digər")
 
-      linked_restaurants = fields.get("Restoraunt", [])
+            item = {
+                "id": r["id"],
+                "name": fields.get("Name", "Adsız Məhsul"),
+                "price": fields.get("Price", 0.0),
+                "image_url": (
+                    fields.get("Image", [{}])[0].get("url")
+                    if fields.get("Image")
+                    else None
+                ),
+            }
 
-      # Record ID keçidini yoxlayır
-      if rest_record_id in linked_restaurants:
-        category = fields.get("Category", "Digər")
+            if category not in categorized_menu:
+                categorized_menu[category] = []
+            categorized_menu[category].append(item)
 
-        item = {
-            "id": r["id"],
-            "name": fields.get("Name", "Adsız Məhsul"),
-            "price": fields.get("Price", 0.0),
-            "image_url": (
-                fields.get("Image", [{}])[0].get("url")
-                if fields.get("Image")
-                else None
-            ),
-        }
-
-        if category not in categorized_menu:
-          categorized_menu[category] = []
-        categorized_menu[category].append(item)
-
-    return categorized_menu
-  except Exception as e:
-    print(f"❌ Menyu xətası: {e}")
-    return {}
+        return categorized_menu
+    except Exception as e:
+        print(f"❌ Menyu xətası: {e}")
+        return {}
 
 
 def save_order(
@@ -133,37 +126,36 @@ def save_order(
     address: str = "-",
     phone: str = "-",
 ):
-  """Sifarişi Orders cədvəlinə yazır."""
-  try:
-    restoran = get_restaurant_info(restaurant_id)
-    rest_record_id = restoran.get("id") if restoran else None
+    """Sifarişi Orders cədvəlinə yazır."""
+    try:
+        restoran = get_restaurant_info(restaurant_id)
+        rest_record_id = restoran.get("id") if restoran else None
 
-    cleaned_price = round(float(total_price), 2)
+        cleaned_price = round(float(total_price), 2)
 
-    payload = {
-        "Customer_Name": f"User ID: {user_id}",
-        "Order_Details": items_summary,
-        "Total_Price": cleaned_price,
-        "Order_Type": order_type,
-        "Address": address,
-        "Phone": str(phone),
-        "Status": "Yeni",
-    }
+        payload = {
+            "Customer_Name": f"User ID: {user_id}",
+            "Order_Details": items_summary,
+            "Total_Price": cleaned_price,
+            "Order_Type": order_type,
+            "Address": address,
+            "Phone": str(phone),
+            "Status": "Yeni",
+        }
 
-    # Yalnız Restoraunt cədvəlindəki record ID ilə linkləyir
-    if rest_record_id and restoran.get("source") == "Restoraunt":
-      payload["Restoraunt"] = [rest_record_id]
+        if rest_record_id and restoran.get("source") == "Restoraunt":
+            payload["Restoraunt"] = [rest_record_id]
 
-    new_order = orders_table.create(payload)
+        new_order = orders_table.create(payload)
 
-    return {
-        "items_summary": items_summary,
-        "total_price": cleaned_price,
-        "order_id": new_order["id"],
-        "order_type": order_type,
-        "address": address,
-        "phone": phone,
-    }
-  except Exception as e:
-    print(f"❌ AIRTABLE SAVE XƏTASI: {e}")
-    raise e
+        return {
+            "items_summary": items_summary,
+            "total_price": cleaned_price,
+            "order_id": new_order["id"],
+            "order_type": order_type,
+            "address": address,
+            "phone": phone,
+        }
+    except Exception as e:
+        print(f"❌ AIRTABLE SAVE XƏTASI: {e}")
+        raise e
