@@ -15,6 +15,7 @@ from telegram.ext import (
 
 from db import (
     check_restaurant_status,
+    get_restaurant_admin_chat_id,
     get_restaurant_info,
     get_restaurant_menu,
     save_order,
@@ -111,7 +112,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 
-# --- 1-Cİ ADDIM: KATEQORİYALARI GÖSTƏRMƏK ---
 async def show_categories(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -132,7 +132,6 @@ async def show_categories(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     keyboard = []
-    # Yalnız kateqoriya adlarını düymə kimi yığırıq
     for category_name in categorized_menu.keys():
         keyboard.append(
             [InlineKeyboardButton(f"📂 {category_name}", callback_data=f"cat_{category_name}")]
@@ -142,13 +141,11 @@ async def show_categories(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reply_markup = InlineKeyboardMarkup(keyboard)
 
     text = "📋 **Zəhmət olmasa kateqoriya seçin:**"
-    
-    # Əgər callback-dən gəliblərsə mesajı redaktə edirik, yoxsa yeni yazırıq
+
     if query.message:
         await query.edit_message_text(text, reply_markup=reply_markup, parse_mode="Markdown")
 
 
-# --- 2-Cİ ADDIM: SEÇİLƏN KATEQORİYANIN YEMƏKLƏRİNİ GÖSTƏRMƏK ---
 async def show_category_items(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -175,7 +172,6 @@ async def show_category_items(update: Update, context: ContextTypes.DEFAULT_TYPE
             ]
         )
 
-    # Geri və Səbət düymələri
     keyboard.append([InlineKeyboardButton("⬅️ Kateqoriyalara Qayıt", callback_data="show_categories")])
     keyboard.append([InlineKeyboardButton("🛒 Səbətə Keç", callback_data="show_cart")])
 
@@ -278,7 +274,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         items_summary = ", ".join(items_summary_list)
 
         try:
-            save_order(
+            # 1. Sifarişi Airtable-a yazırıq
+            order_data = save_order(
                 restaurant_id=restaurant_id,
                 items_summary=items_summary,
                 total_price=total_price,
@@ -288,6 +285,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 phone="-",
             )
 
+            # 2. Müştəriyə təsdiq mesajı veririk
             await update.message.reply_text(
                 f"🎉 **Sifarişiniz qəbul olundu!**\n\n"
                 f"📍 Ünvan/Masa: {address}\n"
@@ -295,6 +293,27 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"Yeməyiniz tezliklə hazırlanacaq! 👨‍🍳",
                 parse_mode="Markdown",
             )
+
+            # 3. Restoran sahibinə (Admin) instant bildiriş göndəririk
+            admin_chat_id = get_restaurant_admin_chat_id(restaurant_id)
+            if admin_chat_id:
+                try:
+                    admin_message = (
+                        f"🔔 **YENİ SİFARİŞ QƏBUL OLUNDU!**\n\n"
+                        f"🆔 **Sifariş ID:** `{order_data['order_id']}`\n"
+                        f"📍 **Masa / Ünvan:** {address}\n"
+                        f"🛒 **Məhsullar:**\n{items_summary}\n\n"
+                        f"💰 **Ümumi Məbləğ:** {total_price:.2f} AZN\n"
+                        f"👤 **Müştəri ID:** `{user_id}`"
+                    )
+                    await context.bot.send_message(
+                        chat_id=int(admin_chat_id),
+                        text=admin_message,
+                        parse_mode="Markdown",
+                    )
+                    logging.info(f"✅ Admin bildirişi göndərildi: {admin_chat_id}")
+                except Exception as admin_err:
+                    logging.error(f"❌ Admin bildiriş xətası: {admin_err}")
 
             context.user_data["cart"] = {}
             context.user_data["awaiting_location"] = False
@@ -319,15 +338,12 @@ def main():
     application = ApplicationBuilder().token(BOT_TOKEN).build()
 
     application.add_handler(CommandHandler("start", start))
-    
-    # Yenilənmiş Kateqoriya Handler-ləri
     application.add_handler(
         CallbackQueryHandler(show_categories, pattern="^(show_menu|show_categories)$")
     )
     application.add_handler(
         CallbackQueryHandler(show_category_items, pattern="^cat_")
     )
-    
     application.add_handler(CallbackQueryHandler(add_to_cart, pattern="^add_"))
     application.add_handler(
         CallbackQueryHandler(show_cart, pattern="^show_cart$")
