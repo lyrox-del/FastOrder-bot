@@ -74,6 +74,17 @@ def get_restaurant_info(restaurant_id: str):
     return None
 
 
+def get_restaurant_admin_chat_id(restaurant_id: str):
+    """Restoranın Admin_Chat_ID-sini gətirir."""
+    try:
+        restoran = get_restaurant_info(restaurant_id)
+        if restoran:
+            return restoran.get("Admin_Chat_ID")
+    except Exception as e:
+        print(f"❌ Admin Chat ID alma xətası: {e}")
+    return None
+
+
 def get_restaurant_menu(restaurant_id: str):
     """Yalnız sorğu edilən restorana aid menyu elementlərini gətirir."""
     try:
@@ -99,18 +110,14 @@ def get_restaurant_menu(restaurant_id: str):
                 continue
 
             linked_restaurants = fields.get("Restoraunt", [])
-            
-            # Siyahıdakı elementləri mətnə çeviririk
             linked_str_list = [str(x).strip().lower() for x in linked_restaurants]
 
-            # Həm Record ID (rec...), həm də Restoran ID (test1, ypx) üzrə yoxlayırıq
             is_match = False
             if rest_record_id and rest_record_id.lower() in linked_str_list:
                 is_match = True
             elif clean_rest_id in linked_str_list:
                 is_match = True
             else:
-                # Bəzən Airtable linked record adını gətirir
                 for item in linked_str_list:
                     if clean_rest_id in item or (rest_record_id and rest_record_id.lower() in item):
                         is_match = True
@@ -138,6 +145,7 @@ def get_restaurant_menu(restaurant_id: str):
     except Exception as e:
         print(f"❌ Menyu xətası: {e}")
         return {}
+
 
 def save_order(
     restaurant_id: str,
