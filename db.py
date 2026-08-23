@@ -24,10 +24,15 @@ def check_restaurant_status(restaurant_id: str) -> bool:
             return False
 
         status = str(restoran.get("Status", "")).strip().lower()
-        return status in ["aktiv", "sınaq aktivdir", "sinaq aktivdir", "active"]
+
+        # Status boşdursa və ya tərkibində aktiv/sinaq sözləri varsa icazə verir
+        if not status or any(w in status for w in ["aktiv", "active", "sinaq", "sınaq"]):
+            return True
+
+        return False
     except Exception as e:
         print(f"❌ Status yoxlama xətası: {e}")
-        return False
+        return True
 
 
 def get_restaurant_info(restaurant_id: str):
