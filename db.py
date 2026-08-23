@@ -1,4 +1,5 @@
 import os
+import re
 from dotenv import load_dotenv
 from pyairtable import Api
 
@@ -16,6 +17,13 @@ menu_table = api.table(AIRTABLE_BASE_ID, "Menu")
 orders_table = api.table(AIRTABLE_BASE_ID, "Orders")
 
 
+def normalize_str(val: str) -> str:
+    """Mətndəki bütün xüsusi simvolları və boşluqları təmizləyərək müqayisəyə hazır edir."""
+    if not val:
+        return ""
+    return re.sub(r"[^a-z0-9]", "", str(val).lower())
+
+
 def check_restaurant_status(restaurant_id: str) -> bool:
     """Restoranın statusunu yoxlayır (Aktiv və ya Sınaq aktivdir)."""
     try:
@@ -25,7 +33,6 @@ def check_restaurant_status(restaurant_id: str) -> bool:
 
         status = str(restoran.get("Status", "")).strip().lower()
 
-        # Status boşdursa və ya tərkibində aktiv/sinaq sözləri varsa icazə verir
         if not status or any(w in status for w in ["aktiv", "active", "sinaq", "sınaq"]):
             return True
 
@@ -38,7 +45,9 @@ def check_restaurant_status(restaurant_id: str) -> bool:
 def get_restaurant_info(restaurant_id: str):
     """Əvvəlcə 'Restoraunt', tapılmasa 'Müraciətlər' cədvəlindən axtarır."""
     try:
-        clean_id = restaurant_id.strip().lower()
+        raw_id = restaurant_id.strip()
+        clean_id = raw_id.lower()
+        norm_id = normalize_str(raw_id)
 
         # 1. Record ID vasitəsilə birbaşa axtarış (rec ilə başlayırsa)
         if clean_id.startswith("rec"):
@@ -56,7 +65,7 @@ def get_restaurant_info(restaurant_id: str):
                 except Exception:
                     pass
 
-        # 2. 'Restoraunt' cədvəlində Restoraunt_ID sütunu üzrə axtarış
+        # 2. Formula üzrə sınaq axtarışı (Restoraunt cədvəli)
         formula = f"LOWER({{Restoraunt_ID}}) = '{clean_id}'"
         records = restaurants_table.all(formula=formula)
 
@@ -64,15 +73,23 @@ def get_restaurant_info(restaurant_id: str):
             fields = records[0]["fields"]
             return {"id": records[0]["id"], "source": "Restoraunt", **fields}
 
-        # 3. Tapılmadısa, 'Müraciətlər' cədvəlində axtarış
-        muraciet_records = muracietler_table.all(formula=formula)
-        if muraciet_records:
-            fields = muraciet_records[0]["fields"]
-            return {
-                "id": muraciet_records[0]["id"],
-                "source": "Müraciətlər",
-                **fields,
-            }
+        # 3. Python tərəfində tam normalized axtarış (Restoraunt cədvəli)
+        all_rest = restaurants_table.all()
+        for r in all_rest:
+            f = r["fields"]
+            r_id = normalize_str(f.get("Restoraunt_ID", ""))
+            r_name = normalize_str(f.get("Name", ""))
+            if norm_id in [r_id, r_name] or r_id in norm_id:
+                return {"id": r["id"], "source": "Restoraunt", **f}
+
+        # 4. 'Müraciətlər' cədvəlində axtarış
+        all_muraciet = muracietler_table.all()
+        for r in all_muraciet:
+            f = r["fields"]
+            r_id = normalize_str(f.get("Restoraunt_ID", ""))
+            r_name = normalize_str(f.get("Name", ""))
+            if norm_id in [r_id, r_name] or r_id in norm_id:
+                return {"id": r["id"], "source": "Müraciətlər", **f}
 
     except Exception as e:
         print(f"❌ Restoran axtarış xətası: {e}")
@@ -102,8 +119,8 @@ def get_restaurant_menu(restaurant_id: str):
             return {}
 
         rest_record_id = restoran.get("id", "")
-        clean_rest_id = restaurant_id.strip().lower()
-        rest_name = str(restoran.get("Name", "")).strip().lower()
+        norm_rest_id = normalize_str(restaurant_id)
+        norm_rest_name = normalize_str(restoran.get("Name", ""))
 
         all_records = menu_table.all()
         categorized_menu = {}
@@ -117,19 +134,20 @@ def get_restaurant_menu(restaurant_id: str):
 
             linked_restaurants = fields.get("Restoraunt", [])
             linked_str_list = [str(x).strip().lower() for x in linked_restaurants]
+            linked_norm_list = [normalize_str(x) for x in linked_restaurants]
 
-            menu_rest_id = str(fields.get("Restoraunt_ID", "")).strip().lower()
+            menu_rest_id = normalize_str(fields.get("Restoraunt_ID", ""))
 
             is_match = False
 
-            # Dəqiq uyğunlaşdırma yoxlanışı
+            # Dəqiq və normalized uyğunlaşdırma yoxlanışı
             if rest_record_id and rest_record_id.lower() in linked_str_list:
                 is_match = True
-            elif rest_name and rest_name in linked_str_list:
+            elif norm_rest_name and norm_rest_name in linked_norm_list:
                 is_match = True
-            elif clean_rest_id in linked_str_list:
+            elif norm_rest_id and norm_rest_id in linked_norm_list:
                 is_match = True
-            elif menu_rest_id and (menu_rest_id == clean_rest_id or menu_rest_id == rest_name):
+            elif menu_rest_id and (menu_rest_id == norm_rest_id or menu_rest_id == norm_rest_name):
                 is_match = True
 
             if is_match:
