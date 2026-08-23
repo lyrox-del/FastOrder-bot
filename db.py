@@ -97,35 +97,53 @@ def get_restaurant_menu(restaurant_id: str):
             return {}
 
         rest_record_id = restoran.get("id", "")
-        
-        # Bütün menyunu çəkmək əvəzinə, yalnız lazımi restorana aid olanları çəkirik
-        formula = f"FIND('{rest_record_id}', ARRAYJOIN({{Restoraunt}})) > 0"
-        records = menu_table.all(formula=formula)
+        clean_rest_id = restaurant_id.strip().lower()
+        rest_name = str(restoran.get("Name", "")).strip().lower()
 
+        all_records = menu_table.all()
         categorized_menu = {}
-        for r in records:
+
+        for r in all_records:
             fields = r["fields"]
 
             is_available = fields.get("Is_Available", True)
             if not is_available:
                 continue
 
-            category = fields.get("Category", "Digər")
+            linked_restaurants = fields.get("Restoraunt", [])
+            linked_str_list = [str(x).strip().lower() for x in linked_restaurants]
 
-            item = {
-                "id": r["id"],
-                "name": fields.get("Name", "Adsız Məhsul"),
-                "price": fields.get("Price", 0.0),
-                "image_url": (
-                    fields.get("Image", [{}])[0].get("url")
-                    if fields.get("Image")
-                    else None
-                ),
-            }
+            menu_rest_id = str(fields.get("Restoraunt_ID", "")).strip().lower()
 
-            if category not in categorized_menu:
-                categorized_menu[category] = []
-            categorized_menu[category].append(item)
+            is_match = False
+
+            # Dəqiq uyğunlaşdırma yoxlanışı
+            if rest_record_id and rest_record_id.lower() in linked_str_list:
+                is_match = True
+            elif rest_name and rest_name in linked_str_list:
+                is_match = True
+            elif clean_rest_id in linked_str_list:
+                is_match = True
+            elif menu_rest_id and (menu_rest_id == clean_rest_id or menu_rest_id == rest_name):
+                is_match = True
+
+            if is_match:
+                category = fields.get("Category", "Digər")
+
+                item = {
+                    "id": r["id"],
+                    "name": fields.get("Name", "Adsız Məhsul"),
+                    "price": fields.get("Price", 0.0),
+                    "image_url": (
+                        fields.get("Image", [{}])[0].get("url")
+                        if fields.get("Image")
+                        else None
+                    ),
+                }
+
+                if category not in categorized_menu:
+                    categorized_menu[category] = []
+                categorized_menu[category].append(item)
 
         return categorized_menu
     except Exception as e:
@@ -159,7 +177,6 @@ def save_order(
             "Status": "Yeni",
         }
 
-        # Restoran mənbəyindən asılı olmayaraq id bağlamaq
         if rest_record_id:
             payload["Restoraunt"] = [rest_record_id]
 
