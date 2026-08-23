@@ -25,7 +25,7 @@ def normalize_str(val: str) -> str:
 
 
 def check_restaurant_status(restaurant_id: str) -> bool:
-    """Restoranın statusunu yoxlayır (Aktiv və ya Sınaq aktivdir)."""
+    """Restoranın statusunu yoxlayır (Aktiv və ya Sınaq/Aktiv statusları daxil olmaqla)."""
     try:
         restoran = get_restaurant_info(restaurant_id)
         if not restoran:
@@ -33,6 +33,7 @@ def check_restaurant_status(restaurant_id: str) -> bool:
 
         status = str(restoran.get("Status", "")).strip().lower()
 
+        # status Aktiv, active, sinaq və ya boşdursa girişə icazə verilir
         if not status or any(w in status for w in ["aktiv", "active", "sinaq", "sınaq"]):
             return True
 
@@ -43,13 +44,13 @@ def check_restaurant_status(restaurant_id: str) -> bool:
 
 
 def get_restaurant_info(restaurant_id: str):
-    """Əvvəlcə 'Restoraunt', tapılmasa 'Müraciətlər' cədvəlindən axtarır."""
+    """Əvvəlcə 'Restoraunt', tapılmasa 'Müraciətlər' cədvəlindən restoran məlumatlarını çəkir."""
     try:
-        raw_id = restaurant_id.strip()
+        raw_id = str(restaurant_id).strip()
         clean_id = raw_id.lower()
         norm_id = normalize_str(raw_id)
 
-        # 1. Record ID vasitəsilə birbaşa axtarış (rec ilə başlayırsa)
+        # 1. Airtable Record ID (rec...) ilə birbaşa axtarış
         if clean_id.startswith("rec"):
             try:
                 record = restaurants_table.get(clean_id)
@@ -65,15 +66,16 @@ def get_restaurant_info(restaurant_id: str):
                 except Exception:
                     pass
 
-        # 2. Formula üzrə sınaq axtarışı (Restoraunt cədvəli)
-        formula = f"LOWER({{Restoraunt_ID}}) = '{clean_id}'"
-        records = restaurants_table.all(formula=formula)
+        # 2. Formula üzrə axtarış (Restoraunt cədvəli)
+        try:
+            formula = f"LOWER({{Restoraunt_ID}}) = '{clean_id}'"
+            records = restaurants_table.all(formula=formula)
+            if records:
+                return {"id": records[0]["id"], "source": "Restoraunt", **records[0]["fields"]}
+        except Exception:
+            pass
 
-        if records:
-            fields = records[0]["fields"]
-            return {"id": records[0]["id"], "source": "Restoraunt", **fields}
-
-        # 3. Python tərəfində tam normalized axtarış (Restoraunt cədvəli)
+        # 3. Restoraunt cədvəlində bütün sətirləri normalized yoxlanışı
         all_rest = restaurants_table.all()
         for r in all_rest:
             f = r["fields"]
@@ -82,12 +84,12 @@ def get_restaurant_info(restaurant_id: str):
             if norm_id in [r_id, r_name] or r_id in norm_id:
                 return {"id": r["id"], "source": "Restoraunt", **f}
 
-        # 4. 'Müraciətlər' cədvəlində axtarış
+        # 4. Müraciətlər cədvəlində axtarış
         all_muraciet = muracietler_table.all()
         for r in all_muraciet:
             f = r["fields"]
             r_id = normalize_str(f.get("Restoraunt_ID", ""))
-            r_name = normalize_str(f.get("Name", ""))
+            r_name = normalize_str(f.get("Restoran Adı", ""))
             if norm_id in [r_id, r_name] or r_id in norm_id:
                 return {"id": r["id"], "source": "Müraciətlər", **f}
 
@@ -97,7 +99,7 @@ def get_restaurant_info(restaurant_id: str):
 
 
 def get_restaurant_admin_chat_id(restaurant_id: str):
-    """Restoranın Admin_Chat_ID-sini gətirir."""
+    """Restoranın Telegram Admin_Chat_ID sahəsini qaytarır."""
     try:
         restoran = get_restaurant_info(restaurant_id)
         if restoran:
@@ -108,7 +110,7 @@ def get_restaurant_admin_chat_id(restaurant_id: str):
 
 
 def get_restaurant_menu(restaurant_id: str):
-    """Yalnız sorğu edilən restorana aid menyu elementlərini gətirir."""
+    """Aktiv restorana aid olan menyu elementlərini gətirir."""
     try:
         restoran = get_restaurant_info(restaurant_id)
         if not restoran:
@@ -120,7 +122,7 @@ def get_restaurant_menu(restaurant_id: str):
 
         rest_record_id = restoran.get("id", "")
         norm_rest_id = normalize_str(restaurant_id)
-        norm_rest_name = normalize_str(restoran.get("Name", ""))
+        norm_rest_name = normalize_str(restoran.get("Name", restoran.get("Restoran Adı", "")))
 
         all_records = menu_table.all()
         categorized_menu = {}
@@ -128,8 +130,9 @@ def get_restaurant_menu(restaurant_id: str):
         for r in all_records:
             fields = r["fields"]
 
-            is_available = fields.get("Is_Available", True)
-            if not is_available:
+            # Menyuda aktivlik statusunu yoxla (Is_Active və ya Is_Available)
+            is_active = fields.get("Is_Active", fields.get("Is_Available", True))
+            if not is_active:
                 continue
 
             linked_restaurants = fields.get("Restoraunt", [])
@@ -140,7 +143,6 @@ def get_restaurant_menu(restaurant_id: str):
 
             is_match = False
 
-            # Dəqiq və normalized uyğunlaşdırma yoxlanışı
             if rest_record_id and rest_record_id.lower() in linked_str_list:
                 is_match = True
             elif norm_rest_name and norm_rest_name in linked_norm_list:
@@ -183,7 +185,7 @@ def save_order(
     address: str = "-",
     phone: str = "-",
 ):
-    """Sifarişi Orders cədvəlinə yazır."""
+    """Sifariş məlumatlarını 'Orders' cədvəlinə əlavə edir."""
     try:
         restoran = get_restaurant_info(restaurant_id)
         rest_record_id = restoran.get("id") if restoran else None
@@ -200,6 +202,7 @@ def save_order(
             "Status": "Yeni",
         }
 
+        # Restoran cədvəli ilə Link yaranması üçün Record ID ötürülür
         if rest_record_id:
             payload["Restoraunt"] = [rest_record_id]
 
